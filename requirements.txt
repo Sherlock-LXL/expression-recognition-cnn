@@ -1,0 +1,6 @@
+# Python dependencies for Expression Recognition CNN
+# GPU acceleration depends on the local PyTorch/CUDA installation.
+
+torch>=2.0
+torchvision>=0.15
+Pillow>=9.0
