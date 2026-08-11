@@ -7,7 +7,7 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 model = NeuralNetwork().to(device)
 
 state_dict = torch.load(
-    "./checkpoints/best_model.pth",
+    "./checkpoints/best_model_learning_rate_decay.pth",
     map_location=device
 )
 model.load_state_dict(state_dict)

@@ -56,6 +56,12 @@ print("Model device:", next(model.parameters()).device)
 best_val_accuracy = 0.0
 os.makedirs("./checkpoints", exist_ok=True)
 
+scheduler = torch.optim.lr_scheduler.MultiStepLR(
+    optimizer,
+    milestones=[10],
+    gamma=0.3
+)
+
 for epoch in range(NUM_EPOCHS):
     train_loss = train_one_epoch(model, train_loader, loss_fn, optimizer, device)
     val_loss, val_accuracy = validate(model, val_loader, loss_fn, device)
@@ -66,3 +72,4 @@ for epoch in range(NUM_EPOCHS):
             "./checkpoints/best_model.pth"
         )
     print(f"Epoch {epoch + 1}/{NUM_EPOCHS}\nTrain loss: {train_loss}\nVal loss: {val_loss}\nVal accuracy: {val_accuracy * 100}%\n")
+    scheduler.step()
