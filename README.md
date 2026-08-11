@@ -1,79 +1,88 @@
-# Expression Recognition CNN
+# 表情识别 CNN / Expression Recognition CNN
 
-## 中文
+一个使用 PyTorch 从零训练的七分类人脸表情识别项目：手动实现轻量级残差 CNN，并通过三个模型的等权 soft-voting ensemble，将 combined FER2013 test accuracy 提升至 66.59%。
+
+A from-scratch PyTorch project for seven-class facial-expression recognition, featuring a hand-built lightweight residual CNN and an equal-weight three-model soft-voting ensemble that reaches 66.59% accuracy on the combined FER2013 test set.
+
+---
+
+## 中文说明
 
 ### 项目简介
 
-Expression Recognition CNN 是一个基于 PyTorch、从零训练的 FER2013 风格七分类人脸表情识别项目。模型接收 1×48×48 灰度人脸图像，并预测以下类别：
+Expression Recognition CNN 是一个使用 PyTorch 从零训练的 FER2013 风格七分类人脸表情识别项目。项目不使用预训练 ResNet，而是手动实现轻量级残差结构，用于学习和理解 CNN、残差连接、Batch Normalization、学习率调度以及模型集成。
 
-- angry
-- disgust
-- fear
-- happy
-- neutral
-- sad
-- surprise
-
-项目用于配合 CS231n 与 CNN 学习过程，通过逐步实验理解卷积网络、数据增强、Batch Normalization、优化方法以及 validation/test protocol。项目不使用大规模预训练分类模型，也不以达到当前最先进性能为目标。
-
-### V2.0.0 更新
-
-V2.0.0 在 V1 四层 CNN 的基础上完成以下更新：
-
-- 在每个卷积层后加入 `BatchNorm2d`。
-- 保留训练阶段的数据增强。
-- 使用分阶段学习率：前 10 个 epoch 为 `1e-3`，第 11–20 个 epoch 为 `3e-4`。
-- 最终模型不使用 Dropout。
-- combined test accuracy 从 56.56% 提升到 61.87%。
-- 原本表现较弱的多个类别得到改善，macro average per-class accuracy 从约 49.74% 提升到约 57.98%。
-
-V2.0.0 的最终 checkpoint 为：
+模型识别以下类别：
 
 ```text
-checkpoints/best_model_learning_rate_decay.pth
+angry, disgust, fear, happy, neutral, sad, surprise
 ```
 
-该 checkpoint 对应四层 CNN、Batch Normalization、learning-rate decay，并且不包含 Dropout。正式测试和最终 `app.py` 推理均使用该模型。
+项目从普通四层 CNN 逐步发展到残差 CNN，并在 V3.0.0 中使用三个独立训练的残差模型进行 soft-voting ensemble。详细逐 epoch 训练记录见 [network_optimization_log.md](docs/network_optimization_log.md)，完整测试结果见 [test_accuracy.md](docs/test_accuracy.md)。
 
-### 模型结构
+### V3.0.0 更新
 
-最终 V2 模型结构以 `src/model.py` 为准：
+V3.0.0 的主要变化：
+
+- 将原来的单卷积层级替换为手动实现的 `ResidualBlock`。
+- 每个残差块包含两层 3×3 卷积、Batch Normalization、shortcut 和残差相加。
+- 输入输出通道不一致时，shortcut 使用 1×1 卷积和 Batch Normalization 完成通道匹配。
+- 保留四阶段通道设计：`1 → 16 → 32 → 64 → 128`。
+- 保留 V2 的数据增强、Adam 优化器和分阶段学习率。
+- 独立训练并保存三个残差模型。
+- 推理时对三个模型的 Softmax 概率进行等权平均，再输出最终类别与 Top-3 概率。
+- 三个单模型的 combined test accuracy 分别达到 63.90%、63.33% 和 63.65%。
+- 三模型 ensemble 的 combined test accuracy 达到 **66.59%**。
+
+与 V2.0.0 的 61.87% 相比，V3 ensemble 提高了 **4.72 个百分点**；与 V1.0.0 的 56.56% 相比，提高了 **10.03 个百分点**。
+
+### 残差模型结构
+
+最终模型结构以 [`src/model.py`](src/model.py) 为准。这里的网络是项目作者手动实现的轻量级 ResNet-style CNN，不是 torchvision 中的标准 ResNet，也没有使用预训练参数。
+
+每个残差块的主分支为：
+
+```text
+Conv2d(3×3, bias=False)
+BatchNorm2d
+ReLU
+Conv2d(3×3, bias=False)
+BatchNorm2d
+```
+
+shortcut 分支：
+
+```text
+in_channels == out_channels: Identity
+in_channels != out_channels: Conv2d(1×1, bias=False) + BatchNorm2d
+```
+
+两个分支相加后再执行 ReLU。完整网络为：
 
 ```text
 Input: [N, 1, 48, 48]
 
-Conv2d: 1 → 16
-BatchNorm2d(16)
-ReLU
-MaxPool2d
+ResidualBlock: 1 → 16
+MaxPool2d(2)
         ↓
 [N, 16, 24, 24]
 
-Conv2d: 16 → 32
-BatchNorm2d(32)
-ReLU
-MaxPool2d
+ResidualBlock: 16 → 32
+MaxPool2d(2)
         ↓
 [N, 32, 12, 12]
 
-Conv2d: 32 → 64
-BatchNorm2d(64)
-ReLU
-MaxPool2d
+ResidualBlock: 32 → 64
+MaxPool2d(2)
         ↓
 [N, 64, 6, 6]
 
-Conv2d: 64 → 128
-BatchNorm2d(128)
-ReLU
-MaxPool2d
+ResidualBlock: 64 → 128
+MaxPool2d(2)
         ↓
 [N, 128, 3, 3]
 
-Flatten
-        ↓
-[N, 1152]
-
+Flatten: 128 × 3 × 3 = 1152
 Linear: 1152 → 128
 ReLU
 Linear: 128 → 7
@@ -81,7 +90,87 @@ Linear: 128 → 7
 [N, 7] logits
 ```
 
-最后一层直接输出 logits，并交给 `CrossEntropyLoss`。训练模型本身不包含 Softmax；Softmax 只在推理阶段用于生成 Top-3 类别概率。
+单个 V3 模型包含 4 个残差块和 **453,447** 个可训练参数。最后一层输出原始 logits；训练时直接交给 `CrossEntropyLoss`，模型内部不包含 Softmax。
+
+### 三模型 Soft-Voting Ensemble
+
+最终 `app.py` 和 `src/test.py` 都加载以下三个模型：
+
+```text
+checkpoints/best_model_res_1.pth
+checkpoints/best_model_res_2.pth
+checkpoints/best_model_res_3.pth
+```
+
+对于同一批输入，每个模型先独立输出 logits，再计算 Softmax 概率：
+
+```text
+p1 = softmax(model_1(x))
+p2 = softmax(model_2(x))
+p3 = softmax(model_3(x))
+
+p_ensemble = (p1 + p2 + p3) / 3
+prediction = argmax(p_ensemble)
+```
+
+因此，当前代码实现的是**等权 soft voting / probability averaging**，不是三个模型各自选出类别后再进行多数表决的 hard voting。Top-3 结果也来自平均后的最终概率。
+
+三个模型结构相同，但来自独立训练过程，因此在不同类别上具有一定互补性。例如模型 1 的 `fear` 表现较好，模型 2 的 `sad` 表现较好，而集成后整体准确率和多个类别准确率进一步提高。
+
+### 性能结果
+
+所有结果均来自 7,178 张 combined `PublicTest + PrivateTest` 图片，不是 standalone `PrivateTest` benchmark。
+
+#### 版本与模型总体结果
+
+| Version / Model | Overall accuracy | Macro per-class accuracy |
+|---|---:|---:|
+| V1.0.0 four-layer CNN | 56.56% | 49.74% |
+| V2.0.0 BatchNorm + LR decay | 61.87% | 57.98% |
+| V3.0.0 residual model 1 | 63.90% | 59.86% |
+| V3.0.0 residual model 2 | 63.33% | 58.97% |
+| V3.0.0 residual model 3 | 63.65% | 59.88% |
+| **V3.0.0 three-model ensemble** | **66.59%** | **62.89%** |
+
+V3 ensemble 相比表现最好的单模型 1 再提高 **2.69 个百分点**。
+
+#### V3 单模型测试结果
+
+| Class | Model 1 | Model 2 | Model 3 |
+|---|---:|---:|---:|
+| angry | 56.37% (540/958) | 54.70% (524/958) | 58.56% (561/958) |
+| disgust | 42.34% (47/111) | 41.44% (46/111) | 45.05% (50/111) |
+| fear | 45.80% (469/1024) | 28.81% (295/1024) | 37.30% (382/1024) |
+| happy | 86.13% (1528/1774) | 83.31% (1478/1774) | 85.40% (1515/1774) |
+| neutral | 64.07% (790/1233) | 61.88% (763/1233) | 63.83% (787/1233) |
+| sad | 43.30% (540/1247) | 61.19% (763/1247) | 48.60% (606/1247) |
+| surprise | 80.99% (673/831) | 81.47% (677/831) | 80.39% (668/831) |
+| **Overall** | **63.90%** | **63.33%** | **63.65%** |
+
+#### V1 / V2 / V3 ensemble 各类别对比
+
+| Class | V1.0.0 | V2.0.0 | V3 ensemble |
+|---|---:|---:|---:|
+| angry | 39.25% (376/958) | 51.25% (491/958) | **58.77% (563/958)** |
+| disgust | 23.42% (26/111) | 44.14% (49/111) | **48.65% (54/111)** |
+| fear | 18.65% (191/1024) | 34.96% (358/1024) | **39.16% (401/1024)** |
+| happy | 85.68% (1520/1774) | 81.51% (1446/1774) | **86.58% (1536/1774)** |
+| neutral | 64.48% (795/1233) | 61.23% (755/1233) | **68.69% (847/1233)** |
+| sad | 43.79% (546/1247) | **57.42% (716/1247)** | 55.09% (687/1247) |
+| surprise | 72.92% (606/831) | 75.33% (626/831) | **83.27% (692/831)** |
+| **Overall** | **56.56%** | **61.87%** | **66.59%** |
+
+V3 ensemble 并非每个类别都超过所有历史版本。例如 `sad` 仍略低于 V2，但 `angry`、`disgust`、`fear`、`happy`、`neutral` 和 `surprise` 均达到三个正式版本中的最好结果。
+
+#### V3 validation 结果
+
+| Model | Best validation accuracy |
+|---|---:|
+| Residual model 1 | 64.74% |
+| Residual model 2 | 64.32% |
+| Residual model 3 | 63.76% |
+
+以上数值均来自项目现有日志和测试记录。项目暂未提供 confusion matrix，因此不进一步推断具体类别之间的混淆关系。
 
 ### 数据集与预处理
 
@@ -92,13 +181,7 @@ data/train/<class>/
 data/test/<class>/
 ```
 
-目录中的类别顺序为：
-
-```text
-angry, disgust, fear, happy, neutral, sad, surprise
-```
-
-原始 `data/train/` 包含 28,709 张图片，并使用 `SEED = 42` 进行固定随机划分：
+原始 `data/train/` 包含 28,709 张图片，并使用 `SEED = 42` 固定训练集和验证集划分：
 
 | Split | Source | Images |
 |---|---|---:|
@@ -106,34 +189,26 @@ angry, disgust, fear, happy, neutral, sad, surprise
 | validation | `data/train/` 的随机子集 | 2,870 |
 | test | `data/test/` | 7,178 |
 
-训练集与验证集使用 `random_split`，不是按类别进行的 stratified split。
+训练/验证划分使用 `random_split`，不是 stratified split。`data/test/` 合并了 3,589 张 `PublicTest` 和 3,589 张 `PrivateTest` 图片。
 
-`data/test/` 由 3,589 张 `PublicTest` 图片和 3,589 张 `PrivateTest` 图片合并组成。因此本文的测试结果是 combined `PublicTest + PrivateTest` accuracy，不是 FER2013 standalone `PrivateTest` benchmark。
-
-训练阶段的数据增强为：
+训练阶段的数据增强：
 
 ```text
-Grayscale(num_output_channels=1)
+Grayscale(1)
 RandomHorizontalFlip(p=0.5)
 RandomRotation(10)
 ColorJitter(brightness=0.1, contrast=0.1)
 ToTensor()
 ```
 
-Validation 与 test 预处理为：
+Validation 与 test：
 
 ```text
 Grayscale(1)
 ToTensor()
 ```
 
-`data/` 中的图片需要已经是 48×48。项目没有使用 Normalize。`app.py` 对外部图片额外执行：
-
-```text
-Grayscale(num_output_channels=1)
-Resize((48, 48))
-ToTensor()
-```
+`data/` 中的图片需要已经是 48×48。项目没有使用 Normalize。`app.py` 对外部图片额外执行 `Resize((48, 48))`。
 
 ### 训练配置
 
@@ -143,60 +218,29 @@ ToTensor()
 - Epochs：20
 - Epoch 1–10 learning rate：`1e-3`
 - Epoch 11–20 learning rate：`3e-4`
+- Scheduler：`MultiStepLR(milestones=[10], gamma=0.3)`
 - Model selection：validation accuracy
-- Checkpoint：保存 validation accuracy 最高的模型参数
+- Default training output：`checkpoints/best_model.pth`
 
-当前训练代码使用 `MultiStepLR(milestones=[10], gamma=0.3)`，并在每个 epoch 结束后更新学习率。这使第 11 个 epoch 开始时的学习率从 `1e-3` 降为 `3e-4`。
+`src/train.py` 每次训练一个残差模型，并保存 validation accuracy 最高的参数。V3 的三份正式权重是三个独立训练结果，已分别保存在 `best_model_res_1.pth`、`best_model_res_2.pth` 和 `best_model_res_3.pth`。
 
-### 性能对比
+### Checkpoints
 
-#### Validation 演化
+仓库当前保留 5 份正式模型文件：
 
-| Version / Experiment | Best validation accuracy |
-|---|---:|
-| V1.0.0 baseline | 57.84% |
-| Four-layer CNN + BatchNorm, fixed learning rate | 59.97% |
-| Four-layer CNN + BatchNorm + learning-rate decay | 61.05% |
+| Checkpoint | Version | Purpose |
+|---|---|---|
+| `best_model_4_layers.pth` | V1.0.0 | 原始四层 CNN |
+| `best_model_batchnorm_lrdecay.pth` | V2.0.0 | BatchNorm + learning-rate decay 最终模型 |
+| `best_model_res_1.pth` | V3.0.0 | Ensemble residual model 1 |
+| `best_model_res_2.pth` | V3.0.0 | Ensemble residual model 2 |
+| `best_model_res_3.pth` | V3.0.0 | Ensemble residual model 3 |
 
-`61.05%` 对应 V2.0.0 最终方案，原始记录为 `61.045296...%`。
-
-#### 总体测试结果
-
-| Version | Overall accuracy | Macro average per-class accuracy |
-|---|---:|---:|
-| V1.0.0 | 56.56% | 49.74% |
-| V2.0.0 | 61.87% | 57.98% |
-| Change | +5.31 percentage points | +8.24 percentage points |
-
-#### 各类别测试结果
-
-| Class | V1.0.0 | V2.0.0 | Change |
-|---|---:|---:|---:|
-| angry | 39.25% (376/958) | 51.25% (491/958) | +12.00 pp |
-| disgust | 23.42% (26/111) | 44.14% (49/111) | +20.72 pp |
-| fear | 18.65% (191/1024) | 34.96% (358/1024) | +16.31 pp |
-| happy | 85.68% (1520/1774) | 81.51% (1446/1774) | −4.17 pp |
-| neutral | 64.48% (795/1233) | 61.23% (755/1233) | −3.25 pp |
-| sad | 43.79% (546/1247) | 57.42% (716/1247) | +13.63 pp |
-| surprise | 72.92% (606/831) | 75.33% (626/831) | +2.41 pp |
-
-V2 在总体准确率提升的同时，明显改善了 V1 中表现较弱的 `angry`、`disgust`、`fear` 和 `sad`。`surprise` 小幅提高，`happy` 与 `neutral` 有一定下降。因此，V2 的主要变化不是所有类别同时提高，而是整体表现提高且类别间表现更加均衡。
-
-当前项目没有提供 confusion matrix，因此不进一步推断具体类别之间的混淆关系。
-
-### 优化与消融实验
-
-- **LayerNorm**：在本次实验中没有观察到明确优于最终 baseline 的收益，因此没有进入 V2 最终模型。
-- **BatchNorm**：在本次实验中加快了收敛，并将 best validation accuracy 提高到约 59.97%。
-- **固定学习率的 BatchNorm**：后期 validation performance 存在较明显波动。
-- **BatchNorm + learning-rate decay**：第 11 个 epoch 将学习率从 `1e-3` 降到 `3e-4`，best validation accuracy 提高到 61.05%，因此被选为最终 V2 方案。
-- **Dropout(p=0.3)**：train loss 明显升高，说明正则化在该实验中生效，但 best validation accuracy 约为 60.35%，没有超过无 Dropout 的 61.05%。因此最终 V2 不使用 Dropout。
-
-这些结论仅描述当前实验结果，不表示 LayerNorm 或 Dropout 在其他模型和训练设置中一定无效。现有逐 epoch 训练记录见 `docs/network_optimization_log.md`。
+BatchNorm 固定学习率的中间实验模型已经移除，不再作为正式 checkpoint 保留。
 
 ### 推理
 
-`samples/` 当前保留四张内容不同的示例图片，分别使用 JPG、TIF、PNG 和 BMP 格式：
+`samples/` 保留四张不同格式的示例图片：
 
 ```text
 sample_01.jpg
@@ -205,71 +249,58 @@ sample_03.png
 sample_04.bmp
 ```
 
-将待识别图片放入 `samples/`，然后从项目根目录运行：
-
-```bash
-py app.py <filename>
-```
-
-例如：
+从项目根目录运行：
 
 ```bash
 py app.py sample_01.jpg
 ```
 
-最终 `app.py` 使用：
+`app.py` 会加载三份 V3 residual checkpoint，对输入执行灰度化、48×48 缩放和 Tensor 转换，然后平均三个模型的概率并输出 Top-3。
+
+输入最好是单人、以人脸为中心的图片。当前版本不包含人脸检测或自动裁剪。
+
+### Windows 桌面版
+
+V3 提供独立 Windows 桌面程序：
 
 ```text
-checkpoints/best_model_learning_rate_decay.pth
+ExpressionRecognitionCNN-v3.0.0.exe
 ```
 
-程序会将输入转换为 `[1, 1, 48, 48]`，使用 `model.eval()` 和 `torch.no_grad()` 完成推理，并按概率从高到低输出 Top-3 类别。
+桌面版保留 V2 的图片选择、预览、Top-3 概率、高 DPI 和小窗口适配设计，但内部推理模型更新为 V3 三模型 soft-voting ensemble。用户无需安装 Python、PyTorch 或 CUDA。
 
-输入最好是单人、以人脸为中心的图片。当前版本不包含人脸检测或自动裁剪功能。
+发布后可从 [GitHub Releases](https://github.com/Sherlock-LXL/expression-recognition-cnn/releases) 下载。
 
 ### 项目结构
 
 ```text
 expression-recognition-cnn/
-├── .gitignore
-├── LICENSE
 ├── README.md
-├── app.py
+├── LICENSE
 ├── requirements.txt
-│
+├── app.py
 ├── checkpoints/
 │   ├── best_model_4_layers.pth
-│   ├── best_model_batchnorm.pth
-│   └── best_model_learning_rate_decay.pth
-│
+│   ├── best_model_batchnorm_lrdecay.pth
+│   ├── best_model_res_1.pth
+│   ├── best_model_res_2.pth
+│   └── best_model_res_3.pth
 ├── docs/
 │   ├── network_optimization_log.md
 │   └── test_accuracy.md
-│
 ├── samples/
 │   ├── sample_01.jpg
 │   ├── sample_02.tif
 │   ├── sample_03.png
 │   └── sample_04.bmp
-│
-├── src/
-│   ├── __init__.py
-│   ├── config.py
-│   ├── dataset.py
-│   ├── model.py
-│   ├── test.py
-│   └── train.py
-│
-└── data/
-    ├── train/
-    └── test/
+└── src/
+    ├── __init__.py
+    ├── config.py
+    ├── dataset.py
+    ├── model.py
+    ├── test.py
+    └── train.py
 ```
-
-Checkpoint 说明：
-
-- `best_model_4_layers.pth`：V1.0.0 四层 CNN。
-- `best_model_batchnorm.pth`：BatchNorm 固定学习率中间实验。
-- `best_model_learning_rate_decay.pth`：V2.0.0 最终模型。
 
 `data/` 不随仓库发布，并已由 `.gitignore` 排除。
 
@@ -281,25 +312,25 @@ Checkpoint 说明：
 pip install -r requirements.txt
 ```
 
-从项目根目录训练：
+训练一个新的 residual model：
 
 ```bash
 py -m src.train
 ```
 
-测试 V2 最终 checkpoint：
+测试 V3 三模型 ensemble：
 
 ```bash
 py -m src.test
 ```
 
-推理：
+对样例图片进行推理：
 
 ```bash
 py app.py <filename>
 ```
 
-也可以使用 `python` 替代 Windows Python Launcher 的 `py`。
+也可以使用 `python` 代替 Windows Python Launcher 的 `py`。
 
 ### Requirements
 
@@ -311,306 +342,188 @@ torchvision>=0.15
 Pillow>=9.0
 ```
 
-GPU 加速取决于本地 PyTorch 与 CUDA 环境；项目也可以在 CPU 上运行。
+项目可以在 CPU 上运行。GPU 加速取决于本地 PyTorch 与 CUDA 环境。
 
-### 方法说明
+### 方法说明与限制
 
-- 模型选择只使用 validation set，并根据 validation accuracy 保存最佳 checkpoint。
-- Combined test set 只用于最终评估，不参与模型选择。
-- V2.0.0 的 test 结果已经被查看。后续版本开发不应根据这组 test 结果继续调整模型结构或超参数，而应继续只依赖 validation set。
-- Softmax 输出表示模型在七个类别之间的相对置信度，不应解释为现实世界中的绝对概率。
-
-### 项目限制
-
+- 模型选择使用 validation accuracy；combined test set 用于最终评估。
+- V3 的三个 checkpoint 共享相同结构，但来自独立训练过程。
+- Ensemble 对三个模型等权平均，没有学习额外的融合权重。
+- Softmax 输出表示七个类别之间的相对置信度，不应视为现实世界中的绝对概率。
 - 模型只接收 48×48 单通道输入。
-- App 不包含人脸检测与裁剪。
-- 测试结果来自 combined `PublicTest + PrivateTest`，不能作为 standalone `PrivateTest` benchmark。
-- 本项目是 CNN 学习与实验项目，不以 SOTA 表情识别性能为目标。
+- App 不包含人脸检测和自动裁剪。
+- 测试结果是 combined `PublicTest + PrivateTest` accuracy，不是 standalone `PrivateTest` benchmark。
+- 本项目用于 CNN、残差结构和 ensemble 学习，不以达到 SOTA 为目标。
 
 ### 项目分工与致谢
 
-项目作者负责模型设计、PyTorch 实现、训练、实验、测试、推理 app 和最终技术决策。
+项目作者负责模型设计、PyTorch 实现、训练、实验、测试、推理应用和最终技术决策。
 
-ChatGPT / OpenAI 在项目中用于 CNN 与 PyTorch 学习辅助、概念解释、代码 review/debug guidance、实验设计建议、结果分析和文档整理。项目核心模型、训练、实验、测试与 app 均由项目作者完成。
+ChatGPT / OpenAI 用于 CNN 与 PyTorch 学习辅助、概念解释、代码 review/debug guidance、实验设计建议、结果分析和文档整理。项目核心模型、训练、实验、测试与应用均由项目作者完成。
 
 ### License
 
-本项目采用 MIT License，详见 `LICENSE`。
+本项目采用 MIT License，详见 [`LICENSE`](LICENSE)。
 
 ---
 
 ## English
 
-### Project Overview
+### Overview
 
-Expression Recognition CNN is a seven-class, FER2013-style facial-expression recognition project built and trained from scratch with PyTorch. The model accepts 1×48×48 grayscale face images and predicts the following classes:
+Expression Recognition CNN is a seven-class, FER2013-style facial-expression recognition project built and trained from scratch with PyTorch. V3.0.0 replaces the previous plain convolutional stages with a hand-built lightweight residual CNN and combines three independently trained models through equal-weight soft voting.
 
-- angry
-- disgust
-- fear
-- happy
-- neutral
-- sad
-- surprise
-
-The project accompanies the study of CS231n and convolutional neural networks. Its experiments focus on convolutional architectures, data augmentation, Batch Normalization, optimization, and validation/test protocol. It does not use a large pretrained classification model and is not intended to achieve state-of-the-art performance.
-
-### V2.0.0 Update
-
-V2.0.0 makes the following changes to the four-layer V1 CNN:
-
-- Adds `BatchNorm2d` after every convolutional layer.
-- Retains training-time data augmentation.
-- Uses a staged learning rate: `1e-3` for epochs 1–10 and `3e-4` for epochs 11–20.
-- Does not use Dropout in the final model.
-- Improves combined test accuracy from 56.56% to 61.87%.
-- Improves several previously weak classes and raises macro average per-class accuracy from approximately 49.74% to 57.98%.
-
-The final V2.0.0 checkpoint is:
+The project predicts:
 
 ```text
-checkpoints/best_model_learning_rate_decay.pth
+angry, disgust, fear, happy, neutral, sad, surprise
 ```
 
-This checkpoint corresponds to the four-layer CNN with Batch Normalization and learning-rate decay, without Dropout. Official testing and the final `app.py` inference path use this model.
+It does not use torchvision's pretrained ResNet models. The residual blocks, training pipeline, experiments, evaluation, and inference application are implemented within this project.
 
-### Model Architecture
+Detailed records are available in [network_optimization_log.md](docs/network_optimization_log.md) and [test_accuracy.md](docs/test_accuracy.md).
 
-The final V2 architecture follows `src/model.py`:
+### V3.0.0 Highlights
+
+- Replaces each plain convolutional stage with a custom `ResidualBlock`.
+- Uses two 3×3 convolutions and Batch Normalization in each main branch.
+- Uses identity shortcuts when channel counts match.
+- Uses a 1×1 convolution and Batch Normalization for channel-changing shortcuts.
+- Retains four stages with channels `1 → 16 → 32 → 64 → 128`.
+- Retains Adam, data augmentation, and staged learning-rate decay from V2.
+- Trains and preserves three independent residual checkpoints.
+- Averages the three models' Softmax probability distributions at inference time.
+- Reaches 63.90%, 63.33%, and 63.65% combined test accuracy with the individual models.
+- Reaches **66.59%** combined test accuracy with the final ensemble.
+
+### Residual Architecture
+
+Each residual block contains:
 
 ```text
-Input: [N, 1, 48, 48]
-
-Conv2d: 1 → 16
-BatchNorm2d(16)
+Main branch:
+Conv2d(3×3, bias=False)
+BatchNorm2d
 ReLU
-MaxPool2d
-        ↓
-[N, 16, 24, 24]
+Conv2d(3×3, bias=False)
+BatchNorm2d
 
-Conv2d: 16 → 32
-BatchNorm2d(32)
-ReLU
-MaxPool2d
-        ↓
-[N, 32, 12, 12]
+Shortcut:
+Identity
+or Conv2d(1×1, bias=False) + BatchNorm2d
 
-Conv2d: 32 → 64
-BatchNorm2d(64)
-ReLU
-MaxPool2d
-        ↓
-[N, 64, 6, 6]
-
-Conv2d: 64 → 128
-BatchNorm2d(128)
-ReLU
-MaxPool2d
-        ↓
-[N, 128, 3, 3]
-
-Flatten
-        ↓
-[N, 1152]
-
-Linear: 1152 → 128
-ReLU
-Linear: 128 → 7
-        ↓
-[N, 7] logits
+Output:
+ReLU(main + shortcut)
 ```
 
-The final layer returns raw logits to `CrossEntropyLoss`. The training model does not contain Softmax; Softmax is used only during inference to produce Top-3 class probabilities.
+The complete network is:
 
-### Dataset and Preprocessing
+```text
+Input [N, 1, 48, 48]
+ResidualBlock 1 → 16   + MaxPool2d
+ResidualBlock 16 → 32  + MaxPool2d
+ResidualBlock 32 → 64  + MaxPool2d
+ResidualBlock 64 → 128 + MaxPool2d
+Flatten 128×3×3
+Linear 1152 → 128
+ReLU
+Linear 128 → 7
+```
 
-The project uses a FER2013-style `ImageFolder` directory layout:
+Each model contains four residual blocks and **453,447** trainable parameters. It returns raw logits and does not include Softmax inside the model definition.
+
+### Soft-Voting Ensemble
+
+The final inference and test paths load:
+
+```text
+best_model_res_1.pth
+best_model_res_2.pth
+best_model_res_3.pth
+```
+
+For an input `x`:
+
+```text
+p_ensemble = (
+    softmax(model_1(x))
+    + softmax(model_2(x))
+    + softmax(model_3(x))
+) / 3
+```
+
+This is probability averaging, or equal-weight **soft voting**. It is not hard majority voting over three predicted labels.
+
+### Performance
+
+| Version / Model | Overall accuracy | Macro per-class accuracy |
+|---|---:|---:|
+| V1.0.0 four-layer CNN | 56.56% | 49.74% |
+| V2.0.0 BatchNorm + LR decay | 61.87% | 57.98% |
+| V3 residual model 1 | 63.90% | 59.86% |
+| V3 residual model 2 | 63.33% | 58.97% |
+| V3 residual model 3 | 63.65% | 59.88% |
+| **V3 three-model ensemble** | **66.59%** | **62.89%** |
+
+The ensemble improves by 4.72 percentage points over V2 and by 2.69 points over the strongest V3 single model.
+
+| Class | V1.0.0 | V2.0.0 | V3 ensemble |
+|---|---:|---:|---:|
+| angry | 39.25% | 51.25% | **58.77%** |
+| disgust | 23.42% | 44.14% | **48.65%** |
+| fear | 18.65% | 34.96% | **39.16%** |
+| happy | 85.68% | 81.51% | **86.58%** |
+| neutral | 64.48% | 61.23% | **68.69%** |
+| sad | 43.79% | **57.42%** | 55.09% |
+| surprise | 72.92% | 75.33% | **83.27%** |
+
+These results use all 7,178 combined PublicTest and PrivateTest images. They are not standalone PrivateTest benchmark results.
+
+### Dataset and Training
+
+The project expects an `ImageFolder` layout:
 
 ```text
 data/train/<class>/
 data/test/<class>/
 ```
 
-The directory-based class order is:
+The 28,709 training images are split into 25,839 training and 2,870 validation images with `SEED = 42`. The split uses `random_split` and is not class-stratified. The combined test set contains 7,178 images.
+
+Training augmentation:
 
 ```text
-angry, disgust, fear, happy, neutral, sad, surprise
-```
-
-The original `data/train/` directory contains 28,709 images. It is split with `SEED = 42` as follows:
-
-| Split | Source | Images |
-|---|---|---:|
-| train | Random subset of `data/train/` | 25,839 |
-| validation | Random subset of `data/train/` | 2,870 |
-| test | `data/test/` | 7,178 |
-
-The training/validation split uses `random_split`; it is not a class-stratified split.
-
-`data/test/` combines 3,589 `PublicTest` images and 3,589 `PrivateTest` images. The reported result is therefore combined `PublicTest + PrivateTest` accuracy, not a standalone FER2013 `PrivateTest` benchmark.
-
-Training-time augmentation is:
-
-```text
-Grayscale(num_output_channels=1)
+Grayscale(1)
 RandomHorizontalFlip(p=0.5)
 RandomRotation(10)
 ColorJitter(brightness=0.1, contrast=0.1)
 ToTensor()
 ```
 
-Validation and test preprocessing is:
+Training configuration:
 
-```text
-Grayscale(1)
-ToTensor()
-```
+- `CrossEntropyLoss`
+- Adam optimizer
+- Batch size 64
+- 20 epochs
+- Learning rate `1e-3` for epochs 1–10
+- Learning rate `3e-4` for epochs 11–20
+- `MultiStepLR(milestones=[10], gamma=0.3)`
+- Best-checkpoint selection by validation accuracy
 
-Images under `data/` must already be 48×48. The project does not use Normalize. For external images, `app.py` additionally applies:
+### Checkpoints
 
-```text
-Grayscale(num_output_channels=1)
-Resize((48, 48))
-ToTensor()
-```
+The repository preserves five official checkpoint files:
 
-### Training Configuration
+| Checkpoint | Role |
+|---|---|
+| `best_model_4_layers.pth` | V1.0.0 final model |
+| `best_model_batchnorm_lrdecay.pth` | V2.0.0 final model |
+| `best_model_res_1.pth` | V3 ensemble model 1 |
+| `best_model_res_2.pth` | V3 ensemble model 2 |
+| `best_model_res_3.pth` | V3 ensemble model 3 |
 
-- Loss: `CrossEntropyLoss`
-- Optimizer: Adam
-- Batch size: 64
-- Epochs: 20
-- Epoch 1–10 learning rate: `1e-3`
-- Epoch 11–20 learning rate: `3e-4`
-- Model selection: validation accuracy
-- Checkpoint: parameters with the highest validation accuracy
-
-The current training code uses `MultiStepLR(milestones=[10], gamma=0.3)` and updates the scheduler after each epoch. The learning rate therefore changes from `1e-3` to `3e-4` at the start of epoch 11.
-
-### Performance Comparison
-
-#### Validation Evolution
-
-| Version / Experiment | Best validation accuracy |
-|---|---:|
-| V1.0.0 baseline | 57.84% |
-| Four-layer CNN + BatchNorm, fixed learning rate | 59.97% |
-| Four-layer CNN + BatchNorm + learning-rate decay | 61.05% |
-
-The `61.05%` result corresponds to the final V2.0.0 configuration; the raw value was `61.045296...%`.
-
-#### Overall Test Results
-
-| Version | Overall accuracy | Macro average per-class accuracy |
-|---|---:|---:|
-| V1.0.0 | 56.56% | 49.74% |
-| V2.0.0 | 61.87% | 57.98% |
-| Change | +5.31 percentage points | +8.24 percentage points |
-
-#### Per-Class Test Results
-
-| Class | V1.0.0 | V2.0.0 | Change |
-|---|---:|---:|---:|
-| angry | 39.25% (376/958) | 51.25% (491/958) | +12.00 pp |
-| disgust | 23.42% (26/111) | 44.14% (49/111) | +20.72 pp |
-| fear | 18.65% (191/1024) | 34.96% (358/1024) | +16.31 pp |
-| happy | 85.68% (1520/1774) | 81.51% (1446/1774) | −4.17 pp |
-| neutral | 64.48% (795/1233) | 61.23% (755/1233) | −3.25 pp |
-| sad | 43.79% (546/1247) | 57.42% (716/1247) | +13.63 pp |
-| surprise | 72.92% (606/831) | 75.33% (626/831) | +2.41 pp |
-
-V2 improves overall accuracy and substantially improves `angry`, `disgust`, `fear`, and `sad`, which were relatively weak in V1. `surprise` improves slightly, while `happy` and `neutral` decrease. The result is therefore better described as higher overall accuracy with more balanced per-class performance, rather than an improvement in every class.
-
-No confusion matrix is included, so the project does not make claims about specific class-to-class confusions.
-
-### Optimization and Ablation
-
-- **LayerNorm**: did not show a clear benefit over the final baseline in this experiment and was not selected for V2.
-- **BatchNorm**: accelerated convergence in this experiment and raised best validation accuracy to approximately 59.97%.
-- **BatchNorm with a fixed learning rate**: showed noticeable validation fluctuation later in training.
-- **BatchNorm + learning-rate decay**: reduced the learning rate from `1e-3` to `3e-4` at epoch 11 and reached 61.05% best validation accuracy, so it was selected for final V2.
-- **Dropout(p=0.3)**: increased training loss, indicating that regularization was active in this experiment, but reached only approximately 60.35% best validation accuracy. It did not exceed the 61.05% result without Dropout, so final V2 does not use Dropout.
-
-These statements describe the current experiments only; they do not imply that LayerNorm or Dropout is ineffective in other models or training settings. Existing per-epoch training records are stored in `docs/network_optimization_log.md`.
-
-### Inference
-
-`samples/` currently contains four visually distinct sample images in JPG, TIF, PNG, and BMP formats:
-
-```text
-sample_01.jpg
-sample_02.tif
-sample_03.png
-sample_04.bmp
-```
-
-Place an input image under `samples/` and run from the repository root:
-
-```bash
-py app.py <filename>
-```
-
-For example:
-
-```bash
-py app.py sample_01.jpg
-```
-
-The final `app.py` uses:
-
-```text
-checkpoints/best_model_learning_rate_decay.pth
-```
-
-The application converts the input to `[1, 1, 48, 48]`, performs inference with `model.eval()` and `torch.no_grad()`, and prints the Top-3 classes in descending probability order.
-
-Input images work best when they contain one centered face. The current version does not include face detection or automatic face cropping.
-
-### Project Structure
-
-```text
-expression-recognition-cnn/
-├── .gitignore
-├── LICENSE
-├── README.md
-├── app.py
-├── requirements.txt
-│
-├── checkpoints/
-│   ├── best_model_4_layers.pth
-│   ├── best_model_batchnorm.pth
-│   └── best_model_learning_rate_decay.pth
-│
-├── docs/
-│   ├── network_optimization_log.md
-│   └── test_accuracy.md
-│
-├── samples/
-│   ├── sample_01.jpg
-│   ├── sample_02.tif
-│   ├── sample_03.png
-│   └── sample_04.bmp
-│
-├── src/
-│   ├── __init__.py
-│   ├── config.py
-│   ├── dataset.py
-│   ├── model.py
-│   ├── test.py
-│   └── train.py
-│
-└── data/
-    ├── train/
-    └── test/
-```
-
-Checkpoint roles:
-
-- `best_model_4_layers.pth`: V1.0.0 four-layer CNN.
-- `best_model_batchnorm.pth`: intermediate BatchNorm experiment with a fixed learning rate.
-- `best_model_learning_rate_decay.pth`: final V2.0.0 model.
-
-`data/` is not distributed with the repository and is excluded by `.gitignore`.
+The fixed-learning-rate BatchNorm intermediate checkpoint has been removed.
 
 ### Usage
 
@@ -620,58 +533,50 @@ Install dependencies:
 pip install -r requirements.txt
 ```
 
-Train from the repository root:
+Train one residual model:
 
 ```bash
 py -m src.train
 ```
 
-Test the final V2 checkpoint:
+Evaluate the three-model ensemble:
 
 ```bash
 py -m src.test
 ```
 
-Run inference:
+Run Top-3 inference on an image stored under `samples/`:
 
 ```bash
-py app.py <filename>
+py app.py sample_01.jpg
 ```
 
-`python` can be used instead of the Windows Python Launcher command `py`.
+### Windows Application
 
-### Requirements
-
-Core dependencies are defined in `requirements.txt`:
+The V3 Windows release asset is named:
 
 ```text
-torch>=2.0
-torchvision>=0.15
-Pillow>=9.0
+ExpressionRecognitionCNN-v3.0.0.exe
 ```
 
-GPU acceleration depends on the local PyTorch and CUDA environment. The project can also run on CPU.
+It preserves the V2 file picker, image preview, Top-3 display, high-DPI support, and responsive layout while replacing the inference backend with the V3 three-model ensemble. It runs on CPU and does not require a local Python, PyTorch, or CUDA installation.
 
-### Methodology Notes
+Download it from [GitHub Releases](https://github.com/Sherlock-LXL/expression-recognition-cnn/releases).
 
-- Model selection uses only the validation set, with the best checkpoint selected by validation accuracy.
-- The combined test set is used only for final evaluation and not for model selection.
-- The V2.0.0 test result has now been observed. Future development should not tune architectures or hyperparameters against this test result and should continue to rely only on validation performance.
-- Softmax outputs represent relative confidence among the seven classes and should not be interpreted as absolute real-world probabilities.
+### Limitations
 
-### Project Limitations
+- Inputs are converted to 1×48×48 grayscale tensors.
+- The application does not perform face detection or automatic cropping.
+- Ensemble probabilities are relative confidence values, not calibrated real-world probabilities.
+- Reported accuracy uses combined PublicTest and PrivateTest.
+- This is a learning and experimentation project rather than a state-of-the-art FER system.
 
-- The model accepts only 48×48 single-channel inputs.
-- The application does not include face detection or cropping.
-- Test results are measured on combined `PublicTest + PrivateTest` and are not a standalone `PrivateTest` benchmark.
-- This is a CNN learning and experimentation project rather than an attempt to achieve state-of-the-art facial-expression recognition performance.
-
-### Contribution and Acknowledgements
+### Acknowledgements
 
 The project author completed the model design, PyTorch implementation, training, experiments, testing, inference application, and final technical decisions.
 
-ChatGPT / OpenAI supported CNN and PyTorch learning, concept explanations, code review and debugging guidance, experimental-design suggestions, result analysis, and documentation organization. The project's core model, training, experiments, testing, and application were completed by the project author.
+ChatGPT / OpenAI supported learning, concept explanations, code review and debugging guidance, experimental-design suggestions, result analysis, and documentation organization. The core models, training, experiments, tests, and application were completed by the project author.
 
 ### License
 
-This project is licensed under the MIT License. See `LICENSE` for details.
+This project is licensed under the MIT License. See [`LICENSE`](LICENSE).
